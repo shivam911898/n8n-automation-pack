@@ -1,0 +1,427 @@
+{
+  "name": "04 - Shopify Order Alerts and VIP Tagging",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 04 - Shopify order alerts\nNew order -> Telegram message to the owner, row in Google Sheets, and orders **above the VIP threshold** get a `VIP` tag in Shopify automatically.\n\n**Setup (10 min)**\n1. Shopify: create a custom app (Settings > Apps > Develop apps), scopes `read_orders` + `write_orders`, copy the Admin API access token.\n2. Credentials: *Shopify Access Token* (shop subdomain + token), *Telegram* (BotFather token), *Google Sheets OAuth2*, and a *Header Auth* credential for the tag call (header `X-Shopify-Access-Token`, value = same token).\n3. Get your chat ID: message your bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates`.\n4. Fill **Config**: `shopDomain` (yourstore.myshopify.com), `telegramChatId`, `sheetId`, `vipThreshold`.\n5. Sheet header row: Order, Date, Customer, Email, Items, Total, Currency, Country, Discount codes, VIP, Order ID.\n6. Activate (the trigger registers its webhook in Shopify on activation), place a test order.",
+        "height": 490,
+        "width": 640,
+        "color": 4
+      },
+      "id": "70d11d4a-ca3a-5bee-9a0a-047edbb3be38",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -140,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "topic": "orders/create",
+        "authentication": "accessToken"
+      },
+      "id": "6b572ac4-18b3-5f24-9a6a-204293ca00ab",
+      "name": "Shopify Trigger (orders/create)",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "",
+          "name": "Shopify Access Token account"
+        }
+      },
+      "webhookId": "9f6ee2c9-fea4-5175-a8bc-ed4c3c6073bd"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fabd194a-95df-578f-821d-a33dbe78e21a",
+              "name": "shopDomain",
+              "value": "YOUR-STORE.myshopify.com",
+              "type": "string"
+            },
+            {
+              "id": "bc370a76-0ee1-5d49-8e01-aac8597b1035",
+              "name": "apiVersion",
+              "value": "2026-04",
+              "type": "string"
+            },
+            {
+              "id": "3b776711-ce8b-5fb4-ba7f-e13e42af181e",
+              "name": "vipThreshold",
+              "value": 200,
+              "type": "number"
+            },
+            {
+              "id": "663f816c-3bb6-598b-b5a2-51a29a7ff4c9",
+              "name": "vipTag",
+              "value": "VIP",
+              "type": "string"
+            },
+            {
+              "id": "80217a15-6eba-510c-8bc0-813a9dc11e07",
+              "name": "telegramChatId",
+              "value": "YOUR_TELEGRAM_CHAT_ID",
+              "type": "string"
+            },
+            {
+              "id": "38105c42-1f3c-5a23-ad3f-67f1f6c48b3d",
+              "name": "sheetId",
+              "value": "YOUR_GOOGLE_SHEET_ID",
+              "type": "string"
+            },
+            {
+              "id": "b93177a4-2be4-5d59-b708-fc664cb44eb7",
+              "name": "sheetName",
+              "value": "Orders",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "8c24a5d8-ac5d-5a3c-8130-6ec80f37bb9d",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        230,
+        300
+      ],
+      "notes": "EDIT ME: every client-specific setting lives in this node. vipThreshold is in your shop currency.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const o = $json;\nconst cfg = $('Config').first().json;\nconst total = Number(o.total_price || 0);\nconst cust = o.customer || {};\nconst ship = o.shipping_address || {};\nconst name = [cust.first_name, cust.last_name].filter(Boolean).join(' ') || ship.name || 'Guest';\nconst items = (o.line_items || []).map((i) => i.quantity + ' x ' + i.title);\nconst codes = (o.discount_codes || []).map((d) => d.code).join(', ');\nconst isVip = total > Number(cfg.vipThreshold);\nconst tags = String(o.tags || '').split(',').map((s) => s.trim()).filter(Boolean);\nif (isVip && !tags.includes(cfg.vipTag)) tags.push(cfg.vipTag);\nconst esc = (s) => String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst adminUrl = 'https://' + cfg.shopDomain + '/admin/orders/' + o.id;\nconst telegramText = '<b>New order ' + esc(o.name) + '</b>' + (isVip ? '  [VIP]' : '') + '\\n' +\n  'Total: <b>' + esc(o.currency) + ' ' + total.toFixed(2) + '</b>\\n' +\n  'Customer: ' + esc(name) + (o.email ? ' (' + esc(o.email) + ')' : '') + '\\n' +\n  'Items: ' + esc(items.join('; ')) + '\\n' +\n  (ship.city || ship.country ? 'Ship to: ' + esc([ship.city, ship.country].filter(Boolean).join(', ')) + '\\n' : '') +\n  (codes ? 'Discount: ' + esc(codes) + '\\n' : '') +\n  '<a href=\"' + adminUrl + '\">Open in Shopify</a>';\nreturn { json: {\n  orderId: o.id,\n  orderName: o.name,\n  createdAt: o.created_at,\n  customerName: name,\n  email: o.email || cust.email || '',\n  items: items.join('; '),\n  total,\n  currency: o.currency,\n  country: ship.country || '',\n  discountCodes: codes,\n  isVip,\n  tagsAfter: tags.join(', '),\n  telegramText,\n} };\n",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "6f636917-f4fb-5413-8e3a-821a3ef367d8",
+      "name": "Format Order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Config').first().json.telegramChatId }}",
+        "text": "={{ $json.telegramText }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "1c6150b1-0d53-54b3-9139-a78482b1675e",
+      "name": "Telegram Order Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        700,
+        130
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheetName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Order": "={{ $json.orderName }}",
+            "Date": "={{ $json.createdAt }}",
+            "Customer": "={{ $json.customerName }}",
+            "Email": "={{ $json.email }}",
+            "Items": "={{ $json.items }}",
+            "Total": "={{ $json.total }}",
+            "Currency": "={{ $json.currency }}",
+            "Country": "={{ $json.country }}",
+            "Discount codes": "={{ $json.discountCodes }}",
+            "VIP": "={{ $json.isVip ? 'yes' : 'no' }}",
+            "Order ID": "={{ $json.orderId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Order",
+              "displayName": "Order",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Customer",
+              "displayName": "Customer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Items",
+              "displayName": "Items",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Total",
+              "displayName": "Total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Currency",
+              "displayName": "Currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Country",
+              "displayName": "Country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Discount codes",
+              "displayName": "Discount codes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "VIP",
+              "displayName": "VIP",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Order ID",
+              "displayName": "Order ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            }
+          ]
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "02d57638-e74b-56f1-baaa-3f9e3472533d",
+      "name": "Log Order to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        700,
+        300
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "eedd0c5b-f825-5977-84cb-e8e765ef92b2",
+              "leftValue": "={{ $json.total }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": "={{ $('Config').first().json.vipThreshold }}"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6948e728-d45f-5b63-9c31-543dd6d5db01",
+      "name": "VIP Order? (total > threshold)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        700,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://' + $('Config').first().json.shopDomain + '/admin/api/' + $('Config').first().json.apiVersion + '/orders/' + $json.orderId + '.json' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ order: { id: $json.orderId, tags: $json.tagsAfter } }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "b0ac0e84-b2dd-56be-b46c-69185bd2d975",
+      "name": "Tag Order as VIP (Shopify Admin API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Shopify Admin token (Header Auth)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "Existing tags are preserved: Format Order appends VIP to the order's current tags.",
+      "notesInFlow": false
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Shopify Trigger (orders/create)": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Format Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Order": {
+      "main": [
+        [
+          {
+            "node": "Telegram Order Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Order to Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "VIP Order? (total > threshold)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VIP Order? (total > threshold)": {
+      "main": [
+        [
+          {
+            "node": "Tag Order as VIP (Shopify Admin API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

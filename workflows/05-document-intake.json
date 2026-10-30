@@ -1,0 +1,472 @@
+{
+  "name": "05 - Document Intake (PDF to Sheet)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 05 - Document intake\nEmails with PDF invoices/receipts -> each PDF is sent to your **extraction API** -> one row per document in Google Sheets -> anything uncertain pings Slack for human review.\n\n**Extraction API contract** (`POST multipart/form-data`, field `file`):\n`{ \"vendor\": \"Acme Ltd\", \"number\": \"INV-1042\", \"date\": \"2026-10-28\", \"total\": 1234.50, \"currency\": \"USD\", \"needs_review\": false }`\n\n**Setup (10 min)**\n1. Credentials: *Gmail OAuth2*, *Google Sheets OAuth2*, *Slack*, and (if your API needs a key) a *Header Auth* credential.\n2. Fill **Config**: `extractApiUrl` (the `EXTRACT_API_URL` placeholder), `sheetId`, `slackChannelId`.\n3. Sheet header row: Received, Vendor, Invoice number, Invoice date, Total, Currency, Needs review, From, Subject, File, Gmail link.\n4. Optionally narrow the Gmail filter, e.g. `has:attachment filename:pdf to:invoices@yourco.com`.\n5. Send yourself an invoice PDF, run once manually, then activate.",
+        "height": 520,
+        "width": 640,
+        "color": 4
+      },
+      "id": "cde514c5-578a-52e1-b53d-72251b946eb9",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -140,
+        -520
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "has:attachment filename:pdf",
+          "readStatus": "unread"
+        },
+        "options": {
+          "downloadAttachments": true,
+          "dataPropertyAttachmentsPrefixName": "attachment_"
+        }
+      },
+      "id": "4f5535ea-da91-55b0-877f-6dffab944521",
+      "name": "Gmail Trigger (PDF attachments)",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8d897f4c-c2a1-5bed-8574-479a21001d6d",
+              "name": "extractApiUrl",
+              "value": "EXTRACT_API_URL",
+              "type": "string"
+            },
+            {
+              "id": "874d7165-5b34-513a-95ce-1d9002906163",
+              "name": "sheetId",
+              "value": "YOUR_GOOGLE_SHEET_ID",
+              "type": "string"
+            },
+            {
+              "id": "eb728870-f4b4-5873-a60c-9769e0cba6e6",
+              "name": "sheetName",
+              "value": "Invoices",
+              "type": "string"
+            },
+            {
+              "id": "85c6e0d6-fbac-5585-929c-324369135d80",
+              "name": "slackChannelId",
+              "value": "YOUR_SLACK_CHANNEL_ID",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {
+          "stripBinary": false
+        }
+      },
+      "id": "7c6db8d5-c1f9-5b26-99c6-b32719b7ce65",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        230,
+        300
+      ],
+      "notes": "EDIT ME: every client-specific setting lives in this node. extractApiUrl must be a full URL, e.g. https://extract.yourdomain.com/extract",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nconst trigger = $('Gmail Trigger (PDF attachments)').all();\nconst inputs = $input.all();\nfor (let idx = 0; idx < inputs.length; idx++) {\n  const item = inputs[idx];\n  const j = item.json;\n  // binary survives the Config node only if \"Strip Binary Data\" is off; fall back to the trigger's copy\n  const bin = item.binary || (trigger[idx] && trigger[idx].binary) || {};\n  const addr = (j.from && j.from.value && j.from.value[0]) || {};\n  for (const key of Object.keys(bin)) {\n    const b = bin[key];\n    const isPdf = String(b.mimeType || '').toLowerCase() === 'application/pdf' || String(b.fileName || '').toLowerCase().endsWith('.pdf');\n    if (!isPdf) continue;\n    out.push({\n      json: {\n        gmailId: j.id,\n        from: addr.address || String(j.From || ''),\n        subject: j.subject || j.Subject || '',\n        fileName: b.fileName || key,\n        receivedAt: $now.toISO(),\n      },\n      binary: { data: b },\n    });\n  }\n}\nreturn out;\n"
+      },
+      "id": "5dd320fa-7142-5a92-a0fe-9b24d883629d",
+      "name": "Split PDF Attachments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "notes": "One output item per PDF; non-PDF attachments (images, signatures) are ignored.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.extractApiUrl }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "957aca8d-6aae-52d9-a505-d0b61ce1e20b",
+      "name": "Extract Document Data (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        690,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Extraction API key (Header Auth)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $('Split PDF Attachments').item.json;\nconst r = $json || {};\nconst hasData = !r.error && (r.vendor !== undefined || r.total !== undefined || r.number !== undefined);\nconst total = Number(String(r.total === undefined || r.total === null ? '' : r.total).replace(/[^0-9.\\-]/g, ''));\nconst apiFlag = r.needs_review === true || String(r.needs_review).toLowerCase() === 'true';\nconst missing = !r.vendor || !r.number || !Number.isFinite(total) || total <= 0;\nreturn { json: {\n  ...src,\n  vendor: hasData ? String(r.vendor || '') : '',\n  number: hasData ? String(r.number || '') : '',\n  date: hasData ? String(r.date || '') : '',\n  total: Number.isFinite(total) ? total : 0,\n  currency: hasData ? String(r.currency || '') : '',\n  needsReview: !hasData || apiFlag || missing, // safety net on top of the API's own flag\n  reviewReason: !hasData ? 'extraction API failed' : apiFlag ? 'flagged by API' : missing ? 'missing vendor/number/total' : '',\n  gmailLink: 'https://mail.google.com/mail/u/0/#inbox/' + src.gmailId,\n} };\n",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "2e16734d-f83b-50b7-8cbd-d53e985ab15d",
+      "name": "Parse Extraction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheetName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Received": "={{ $json.receivedAt }}",
+            "Vendor": "={{ $json.vendor }}",
+            "Invoice number": "={{ $json.number }}",
+            "Invoice date": "={{ $json.date }}",
+            "Total": "={{ $json.total }}",
+            "Currency": "={{ $json.currency }}",
+            "Needs review": "={{ $json.needsReview ? 'yes' : 'no' }}",
+            "From": "={{ $json.from }}",
+            "Subject": "={{ $json.subject }}",
+            "File": "={{ $json.fileName }}",
+            "Gmail link": "={{ $json.gmailLink }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Received",
+              "displayName": "Received",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Vendor",
+              "displayName": "Vendor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Invoice number",
+              "displayName": "Invoice number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Invoice date",
+              "displayName": "Invoice date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Total",
+              "displayName": "Total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Currency",
+              "displayName": "Currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Needs review",
+              "displayName": "Needs review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "From",
+              "displayName": "From",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Subject",
+              "displayName": "Subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "File",
+              "displayName": "File",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            },
+            {
+              "id": "Gmail link",
+              "displayName": "Gmail link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsed": true
+            }
+          ]
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "095e78c9-261c-500a-86bf-6cbb580ce66b",
+      "name": "Append to Invoice Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1150,
+        300
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "20d90a31-ff0b-55b0-9d5a-4435b08d2371",
+              "leftValue": "={{ $('Parse Extraction').item.json.needsReview }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "16f82229-b59c-5b95-999d-58bbfcc6261d",
+      "name": "Needs Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.slackChannelId }}",
+          "mode": "id"
+        },
+        "text": "={{ ':mag: *Document needs review* (' + $('Parse Extraction').item.json.reviewReason + ')\\n' + 'Vendor: ' + ($('Parse Extraction').item.json.vendor || '?') + ' | No: ' + ($('Parse Extraction').item.json.number || '?') + ' | Total: ' + $('Parse Extraction').item.json.total + ' ' + $('Parse Extraction').item.json.currency + '\\nFrom: ' + $('Parse Extraction').item.json.from + ' | File: ' + $('Parse Extraction').item.json.fileName + '\\n<' + $('Parse Extraction').item.json.gmailLink + '|Open email>' }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "a1cb5acb-23f8-521d-b0b6-6f3b33e0a10a",
+      "name": "Slack Review Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1610,
+        190
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger (PDF attachments)": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Split PDF Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split PDF Attachments": {
+      "main": [
+        [
+          {
+            "node": "Extract Document Data (API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Document Data (API)": {
+      "main": [
+        [
+          {
+            "node": "Parse Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Extraction": {
+      "main": [
+        [
+          {
+            "node": "Append to Invoice Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Invoice Sheet": {
+      "main": [
+        [
+          {
+            "node": "Needs Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Review?": {
+      "main": [
+        [
+          {
+            "node": "Slack Review Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

@@ -1,0 +1,21 @@
+# local n8n data used for the offline import check (contains a throwaway SQLite DB + generated encryption key)
+.n8n-tmp/
+
+# secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# backups produced by the self-host backup command
+backups/
+*.sql.gz
+
+# python / node / OS
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+.DS_Store
+Thumbs.db

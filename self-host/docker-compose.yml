@@ -1,0 +1,103 @@
+# n8n + PostgreSQL for a single business or client (see README.md in this folder).
+# Works with plain `docker compose up -d` and as a Coolify "Docker Compose" resource.
+# All values come from .env (copy .env.example). Never hard-code secrets in this file.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+
+  n8n:
+    # Pin a version in production (N8N_VERSION=1.x.y) and update on purpose, not by surprise.
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Bound to localhost only: the reverse proxy (Coolify / Caddy / Traefik) is the public entrance.
+    # Remove this block if your proxy joins the Docker network instead.
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      # Encrypts every stored credential. Lose it and all credentials are unreadable: back it up separately.
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: https
+      # Public URL used to build webhook addresses (must match your domain, with trailing slash).
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      # One reverse proxy sits in front of n8n.
+      N8N_PROXY_HOPS: "1"
+
+      # Schedule Trigger nodes (08:00 KPI report, 17:30 digest) use this timezone.
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      TZ: ${GENERIC_TIMEZONE}
+
+      # Housekeeping: keep the database small, keep big PDFs out of the database.
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "336"
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - internal
+
+    # ---- Option B: Traefik labels (host already runs Traefik). Coolify adds these for you when you
+    # set a domain in its UI, so leave them commented there. -------------------------------------
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.routers.n8n.rule=Host(`${N8N_HOST}`)
+    #   - traefik.http.routers.n8n.entrypoints=websecure
+    #   - traefik.http.routers.n8n.tls.certresolver=letsencrypt
+    #   - traefik.http.services.n8n.loadbalancer.server.port=5678
+
+  # ---- Option A: Caddy on a plain VPS (automatic HTTPS). Uncomment this service, create a
+  # `Caddyfile` next to this file containing:   n8n.example.com { reverse_proxy n8n:5678 }
+  # and remove the `ports:` block from the n8n service above. ------------------------------------
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - n8n
+  #   networks:
+  #     - internal
+
+volumes:
+  postgres_data:
+  n8n_data:
+  # caddy_data:
+  # caddy_config:
+
+networks:
+  internal:

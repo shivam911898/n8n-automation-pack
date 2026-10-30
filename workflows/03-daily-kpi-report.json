@@ -1,0 +1,457 @@
+{
+  "name": "03 - Daily KPI Report",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 03 - Daily KPI report\nEvery morning at 08:00: read the sales log (and optionally Stripe), compute today / yesterday / last-7-days totals in code (no AI maths), let AI write a 5-line summary from those exact numbers, and send it to Slack and email.\n\n**Setup (10 min)**\n1. Credentials: *Google Sheets OAuth2*, *Slack*, *Gmail OAuth2*, *Header Auth* named **Groq API** (`Authorization` = `Bearer gsk_...`, your Groq key). Optional: *Stripe*.\n2. Sheet tab *Sales Log* needs columns for date, amount, product (names configurable in **Config**). Dates as 2026-10-29 or 10/29/2026.\n3. Fill `sheetId`, `slackChannelId`, `reportEmail`, `currency`.\n4. Stripe is OFF by default. Only enable the node if the Sales Log does NOT already contain the same sales (otherwise revenue is counted twice). Fetches the last 100 charges.\n5. Click *Execute workflow* to test, then activate. Timezone = the instance/workflow timezone.",
+        "height": 430,
+        "width": 620,
+        "color": 4
+      },
+      "id": "d0adf59a-a379-5214-a1ed-b639c5c36b9e",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -140,
+        -430
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### AI step: Groq via HTTP Request\nCalls Groq's OpenAI-compatible Chat Completions API (`/openai/v1/chat/completions`) with `response_format: json_object`, 3 retries and a fallback, so an AI outage never drops a record.\nModel = **Config -> aiModel** (default `openai/gpt-oss-120b`). Alternatives: `openai/gpt-oss-20b` (faster/cheaper), `qwen/qwen3.8-27b` (third option).\nCredential: Header Auth **Groq API** (`Authorization` = `Bearer gsk_...`).\nGemini or OpenAI instead? Change the URL + body shape (see workflows README).",
+        "height": 240,
+        "width": 460,
+        "color": 5
+      },
+      "id": "7fcd85cb-fd2f-5b4f-9a2a-46d3ff70dad3",
+      "name": "AI Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1090,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "4b980ebb-eaa0-5585-b77b-b3c7be4c4a0d",
+      "name": "Schedule Trigger 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1fb4642-6969-5025-a2aa-58cb4ba4ba34",
+              "name": "businessName",
+              "value": "Acme Store",
+              "type": "string"
+            },
+            {
+              "id": "df5f505b-9038-576f-8e68-eb3ee3fbd748",
+              "name": "currency",
+              "value": "USD",
+              "type": "string"
+            },
+            {
+              "id": "86791930-dfb8-5501-b636-2490aa5d5f91",
+              "name": "sheetId",
+              "value": "YOUR_GOOGLE_SHEET_ID",
+              "type": "string"
+            },
+            {
+              "id": "9a6d16e6-639c-5587-8b1f-ede00401c8bf",
+              "name": "salesSheetName",
+              "value": "Sales Log",
+              "type": "string"
+            },
+            {
+              "id": "e588ed82-920d-5769-b6c3-3aa208f7887d",
+              "name": "dateColumn",
+              "value": "Date",
+              "type": "string"
+            },
+            {
+              "id": "3e162a53-606a-5b08-b63f-01b57cdaca7e",
+              "name": "amountColumn",
+              "value": "Amount",
+              "type": "string"
+            },
+            {
+              "id": "23645202-8989-563b-b523-a1e7035ba512",
+              "name": "productColumn",
+              "value": "Product",
+              "type": "string"
+            },
+            {
+              "id": "341a62b8-6938-5239-aa21-eee4961e360f",
+              "name": "slackChannelId",
+              "value": "YOUR_SLACK_CHANNEL_ID",
+              "type": "string"
+            },
+            {
+              "id": "d5f5fdfc-260c-5239-9fa5-b59f884c1057",
+              "name": "reportEmail",
+              "value": "owner@example.com",
+              "type": "string"
+            },
+            {
+              "id": "d18391bb-a318-5497-a0fa-7afdc050c1b8",
+              "name": "aiModel",
+              "value": "openai/gpt-oss-120b",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "f8298eef-10d2-54a7-b0b4-3fcaba540539",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        230,
+        300
+      ],
+      "notes": "EDIT ME: every client-specific setting lives in this node. ",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.salesSheetName }}",
+          "mode": "name"
+        },
+        "filtersUI": {},
+        "options": {}
+      },
+      "id": "35023c75-8d92-5358-8c92-cbfbeb53f954",
+      "name": "Read Sales Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        460,
+        200
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/charges",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "created[gte]",
+              "value": "={{ Math.floor($now.minus({ days: 14 }).startOf('day').toSeconds()) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "100cbb75-af0c-517a-8d56-ad2eeaea26f0",
+      "name": "Stripe Charges (optional)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        410
+      ],
+      "credentials": {
+        "stripeApi": {
+          "id": "",
+          "name": "Stripe account"
+        }
+      },
+      "disabled": true,
+      "onError": "continueRegularOutput",
+      "notes": "DISABLED by default. Enable only if Stripe is your source of truth (not also in the Sales Log).",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "4e5cadb0-1222-5205-8cba-2765aacc00b0",
+      "name": "Merge Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        690,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Config').first().json;\nconst zone = $now.zoneName;\nconst today = $now.startOf('day');\nconst dayKey = (n) => today.minus({ days: n }).toFormat('yyyy-MM-dd');\nconst r2 = (x) => Math.round(x * 100) / 100;\n\nconst parseDate = (v) => {\n  if (v === undefined || v === null || v === '') return null;\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return m[1] + '-' + m[2] + '-' + m[3];\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/); // US style M/D/YYYY\n  if (m) return m[3] + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0');\n  return null;\n};\nconst parseAmount = (v) => {\n  const n = Number(String(v === undefined || v === null ? '' : v).replace(/[^0-9.\\-]/g, ''));\n  return Number.isFinite(n) ? n : 0;\n};\nconst makeBook = () => ({\n  days: {},\n  add(key, amount, product) {\n    const d = this.days[key] || (this.days[key] = { total: 0, orders: 0, products: {} });\n    d.total += amount;\n    d.orders += 1;\n    if (product) d.products[product] = (d.products[product] || 0) + amount;\n  },\n  sum(keys) {\n    const out = { total: 0, orders: 0, products: {} };\n    for (const k of keys) {\n      const d = this.days[k];\n      if (!d) continue;\n      out.total += d.total;\n      out.orders += d.orders;\n      for (const [p, v] of Object.entries(d.products)) out.products[p] = (out.products[p] || 0) + v;\n    }\n    return out;\n  },\n});\n\nconst sheet = makeBook();\nconst stripe = makeBook();\nlet rowsRead = 0;\nlet stripeSeen = false;\nlet stripeCharges = 0;\nfor (const item of $input.all()) {\n  const j = item.json;\n  if (j && j.object === 'list' && Array.isArray(j.data)) {\n    stripeSeen = true;\n    for (const ch of j.data) {\n      if (ch.status !== 'succeeded' || ch.paid === false) continue;\n      if (String(ch.currency).toUpperCase() !== String(cfg.currency).toUpperCase()) continue;\n      const key = new Date(ch.created * 1000).toLocaleDateString('en-CA', { timeZone: zone });\n      stripe.add(key, (ch.amount - (ch.amount_refunded || 0)) / 100, ch.description || '');\n      stripeCharges += 1;\n    }\n  } else if (j && j[cfg.dateColumn] !== undefined) {\n    const key = parseDate(j[cfg.dateColumn]);\n    if (!key) continue;\n    sheet.add(key, parseAmount(j[cfg.amountColumn]), String(j[cfg.productColumn] || '').trim());\n    rowsRead += 1;\n  }\n}\n\nconst range = (from, to) => { const a = []; for (let n = from; n <= to; n++) a.push(dayKey(n)); return a; };\nconst pack = (b, keys) => { const s = b.sum(keys); return { total: r2(s.total), orders: s.orders, products: s.products }; };\nconst pct = (cur, prev) => (prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : null);\n\nconst t = pack(sheet, [dayKey(0)]);\nconst y = pack(sheet, [dayKey(1)]);\nconst d2 = pack(sheet, [dayKey(2)]);\nconst l7 = pack(sheet, range(1, 7));\nconst p7 = pack(sheet, range(8, 14));\nconst topProducts = Object.entries(l7.products).sort((a, b) => b[1] - a[1]).slice(0, 3)\n  .map(([name, total]) => ({ name, total: r2(total) }));\nconst strip = (o) => ({ total: o.total, orders: o.orders });\n\nreturn [{ json: {\n  businessName: cfg.businessName,\n  currency: cfg.currency,\n  reportDate: dayKey(0),\n  yesterdayDate: dayKey(1),\n  today: strip(t),\n  yesterday: strip(y),\n  dayBefore: strip(d2),\n  last7: strip(l7),\n  prev7: strip(p7),\n  yesterdayVsDayBeforePct: pct(y.total, d2.total),\n  last7VsPrev7Pct: pct(l7.total, p7.total),\n  averageOrderValueLast7: l7.orders ? r2(l7.total / l7.orders) : null,\n  topProducts,\n  stripe: stripeSeen ? {\n    charges: stripeCharges,\n    today: strip(pack(stripe, [dayKey(0)])),\n    yesterday: strip(pack(stripe, [dayKey(1)])),\n    last7: strip(pack(stripe, range(1, 7))),\n  } : null,\n  rowsRead,\n} }];\n"
+      },
+      "id": "42993e07-a813-5e26-8a58-1d1966f7e507",
+      "name": "Aggregate KPIs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "notes": "All maths happens here, never in the AI. Handles YYYY-MM-DD and M/D/YYYY dates.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Config').first().json.aiModel, temperature: 0.1, max_tokens: 1024, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You write the 5-line morning KPI note for a small-business owner. Use ONLY the numbers in the JSON the user sends. Never invent or recalculate figures. Exactly 5 short lines, plain text, no markdown, no bullets, no intro or outro. Line 1: yesterday's revenue and orders, and the change vs the day before. Line 2: last 7 days revenue vs the previous 7 days. Line 3: best-selling products (or say no product data). Line 4: today so far, plus Stripe figures if present. Line 5: one practical suggestion for today. Use the currency symbol for the given currency code. Respond with JSON only, no markdown fences, matching exactly this schema: {\\\"lines\\\": [\\\"<string: line 1>\\\", \\\"<string: line 2>\\\", \\\"<string: line 3>\\\", \\\"<string: line 4>\\\", \\\"<string: line 5>\\\"]} - an array of exactly 5 strings.\" }, { role: 'user', content: 'KPI data for ' + $json.reportDate + ' (JSON):\\n' + JSON.stringify($json) } ] }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "00801f0c-2d28-5078-9193-6a9fbd6edd25",
+      "name": "AI Write Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1150,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Groq API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiText = (j) => {\n  try { return String(j.choices[0].message.content || ''); } catch (e) { return ''; }\n};\nconst aiJson = (j) => {\n  try {\n    const v = JSON.parse(aiText(j));\n    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;\n  } catch (e) { return null; }\n};\nconst k = $('Aggregate KPIs').first().json;\nconst fmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: k.currency || 'USD' }).format(n || 0);\nconst pctText = (p) => (p === null || p === undefined ? 'n/a' : (p >= 0 ? '+' : '') + p + '%');\nconst esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst ord = (n) => n + (n === 1 ? ' order' : ' orders');\n\nconst ai = aiJson($json);\nlet lines = ai && Array.isArray(ai.lines) ? ai.lines.map((s) => String(s).trim()).filter(Boolean).slice(0, 5) : [];\nconst aiOk = lines.length >= 3;\nif (!aiOk) {\n  lines = [\n    'Yesterday (' + k.yesterdayDate + '): ' + fmt(k.yesterday.total) + ' from ' + ord(k.yesterday.orders) + ' (' + pctText(k.yesterdayVsDayBeforePct) + ' vs day before).',\n    'Last 7 days: ' + fmt(k.last7.total) + ' from ' + ord(k.last7.orders) + ' (' + pctText(k.last7VsPrev7Pct) + ' vs previous 7 days).',\n    'Top products: ' + (k.topProducts.length ? k.topProducts.map((p) => p.name + ' ' + fmt(p.total)).join(', ') : 'no product data') + '.',\n    'Today so far: ' + fmt(k.today.total) + ' from ' + ord(k.today.orders) + '.',\n    '(AI summary unavailable - figures above are computed directly from your sales log.)',\n  ];\n}\nconst table = [\n  ['Today so far', fmt(k.today.total), k.today.orders],\n  ['Yesterday', fmt(k.yesterday.total), k.yesterday.orders],\n  ['Last 7 days', fmt(k.last7.total), k.last7.orders],\n  ['Previous 7 days', fmt(k.prev7.total), k.prev7.orders],\n];\nconst slackText = '*Daily KPI report - ' + k.businessName + ' (' + k.reportDate + ')*\\n' + lines.join('\\n') +\n  '\\n\\n' + table.map((r) => '*' + r[0] + ':* ' + r[1] + ' (' + ord(r[2]) + ')').join('  |  ');\nconst html = '<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">' +\n  '<h2 style=\"margin:0 0 8px\">Daily KPI report - ' + esc(k.businessName) + '</h2>' +\n  '<p style=\"color:#666;margin:0 0 12px\">' + esc(k.reportDate) + '</p>' +\n  lines.map((l) => '<p style=\"margin:4px 0\">' + esc(l) + '</p>').join('') +\n  '<table style=\"border-collapse:collapse;margin-top:14px\">' +\n  table.map((r) => '<tr><td style=\"padding:4px 14px 4px 0;color:#666\">' + esc(r[0]) + '</td><td style=\"padding:4px 14px 4px 0\"><b>' + esc(r[1]) + '</b></td><td style=\"color:#666\">' + ord(r[2]) + '</td></tr>').join('') +\n  '</table></div>';\nreturn { json: { slackText, subject: 'Daily KPI report - ' + k.businessName + ' - ' + k.reportDate, html, aiStatus: aiOk ? 'ok' : 'fallback' } };\n",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "454512a1-3196-53d6-81d2-0558865aeb31",
+      "name": "Format Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.slackChannelId }}",
+          "mode": "id"
+        },
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "82f9df74-5259-523c-8d91-df164385d6eb",
+      "name": "Post Report to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1610,
+        190
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $('Config').first().json.reportEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "9f62851a-f905-5dd3-ae7e-f7b1fd0ee8ca",
+      "name": "Email Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1610,
+        410
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger 08:00": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Read Sales Log",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Stripe Charges (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Sales Log": {
+      "main": [
+        [
+          {
+            "node": "Merge Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stripe Charges (optional)": {
+      "main": [
+        [
+          {
+            "node": "Merge Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Sources": {
+      "main": [
+        [
+          {
+            "node": "Aggregate KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate KPIs": {
+      "main": [
+        [
+          {
+            "node": "AI Write Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Write Summary": {
+      "main": [
+        [
+          {
+            "node": "Format Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Report": {
+      "main": [
+        [
+          {
+            "node": "Post Report to Slack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
